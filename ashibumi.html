@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>足踏みカウンター</title>
+<!--
+  足踏みカウンター(2026-11-06 パソ太郎が作った)
+  ・スマホの揺れ(加速度)で足踏みを数えて、歩数×歩幅で距離にする
+  ・記録はこのスマホの中(localStorage)にだけ残る。どこにも送らない
+  ・写真で読みやすいように、白地に黒の大きな字
+-->
+<style>
+  :root { --ink:#111; --sub:#555; --line:#ccc; --accent:#0a58ca; --stop:#c62828; --bg:#fff; --soft:#f3f5f8; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Noto Sans JP","Hiragino Sans","Yu Gothic",sans-serif; }
+  body { padding:12px 16px 40px; max-width:560px; margin:0 auto; }
+  .date { font-size:30px; font-weight:800; text-align:center; margin:4px 0 10px; letter-spacing:1px; }
+  .card { border:3px solid var(--ink); border-radius:14px; padding:12px 14px; margin-bottom:14px; }
+  .card h2 { margin:0 0 8px; font-size:20px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; }
+  .k { font-size:16px; color:var(--sub); font-weight:700; }
+  .v { font-size:38px; font-weight:900; line-height:1.1; font-variant-numeric:tabular-nums; }
+  .v small { font-size:18px; font-weight:700; margin-left:2px; }
+  .now { background:var(--soft); border-color:var(--accent); }
+  .now .big { font-size:72px; font-weight:900; text-align:center; line-height:1; font-variant-numeric:tabular-nums; }
+  .now .row { display:flex; justify-content:space-around; text-align:center; margin-top:8px; }
+  .now .row .v { font-size:30px; }
+  button { font:inherit; border:none; border-radius:14px; cursor:pointer; }
+  #go { width:100%; padding:26px 0; font-size:34px; font-weight:900; color:#fff; background:var(--accent); margin-bottom:14px; }
+  #go.on { background:var(--stop); }
+  .msg { font-size:15px; color:var(--stop); font-weight:700; text-align:center; min-height:1em; margin:-6px 0 10px; }
+  table { width:100%; border-collapse:collapse; font-size:18px; font-variant-numeric:tabular-nums; }
+  th, td { border-bottom:1px solid var(--line); padding:6px 4px; text-align:right; }
+  th:first-child, td:first-child { text-align:left; }
+  th { font-size:15px; color:var(--sub); }
+  details { border:2px solid var(--line); border-radius:12px; padding:10px 12px; margin-top:14px; }
+  summary { font-size:18px; font-weight:700; cursor:pointer; }
+  label { display:block; font-size:17px; margin:12px 0 4px; font-weight:700; }
+  input[type=number] { font-size:22px; width:7em; padding:6px; }
+  input[type=range] { width:100%; }
+  .note { font-size:15px; color:var(--sub); line-height:1.6; }
+  .small-btn { background:#eee; color:var(--ink); padding:10px 14px; font-size:16px; margin:8px 8px 0 0; }
+  .meter { height:10px; background:#e5e5e5; border-radius:5px; overflow:hidden; margin-top:6px; }
+  .meter i { display:block; height:100%; width:0; background:var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="date" id="date">-</div>
+
+<div class="card">
+  <h2>今日の合計</h2>
+  <div class="grid">
+    <div><div class="k">回数</div><div class="v" id="tN">0<small>回</small></div></div>
+    <div><div class="k">時間</div><div class="v" id="tT">0<small>分</small></div></div>
+    <div><div class="k">歩数</div><div class="v" id="tS">0<small>歩</small></div></div>
+    <div><div class="k">距離</div><div class="v" id="tD">0.00<small>km</small></div></div>
+  </div>
+</div>
+
+<button id="go">スタート</button>
+<div class="msg" id="msg"></div>
+
+<div class="card now" id="nowCard" hidden>
+  <div class="big" id="nS">0</div>
+  <div style="text-align:center" class="k">歩</div>
+  <div class="row">
+    <div><div class="k">時間</div><div class="v" id="nT">0:00</div></div>
+    <div><div class="k">距離</div><div class="v" id="nD">0<small>m</small></div></div>
+    <div><div class="k">テンポ</div><div class="v" id="nP">0<small>歩/分</small></div></div>
+  </div>
+  <div class="meter"><i id="meter"></i></div>
+  <div class="note" style="text-align:center">青い棒=今の揺れの強さ(線を越えると1歩)</div>
+</div>
+
+<div class="card">
+  <h2>今日の記録</h2>
+  <table>
+    <thead><tr><th>始めた時刻</th><th>時間</th><th>歩数</th><th>距離</th></tr></thead>
+    <tbody id="list"><tr><td colspan="4" class="note">まだ無い</td></tr></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>今週の合計(月曜から)</h2>
+  <div class="grid">
+    <div><div class="k">時間</div><div class="v" id="wT">0<small>分</small></div></div>
+    <div><div class="k">距離</div><div class="v" id="wD">0.00<small>km</small></div></div>
+  </div>
+</div>
+
+<details>
+  <summary>設定・使い方</summary>
+  <label for="stride">歩幅(cm)</label>
+  <input type="number" id="stride" min="20" max="200" step="1">
+  <label for="sens">数える強さ:<span id="sensV"></span></label>
+  <input type="range" id="sens" min="1" max="10" step="1">
+  <div class="note">
+    数字が大きいほど、小さな揺れでも1歩と数える。<br>
+    ★最初に1回:自分で100歩を数えながら足踏みして、この画面の歩数と比べる。<br>
+    ・画面の数が少ない → 強さを上げる<br>
+    ・画面の数が多い → 強さを下げる<br>
+    ・スマホはポケットか手に持つ。足踏みのあいだ、画面はつけたまま(自動で消えないようにしてある)<br>
+    ・画面を消したり、ほかのアプリに切り替えたりした時間は数えない<br>
+    ・記録はこのスマホの中にだけ残る。どこにも送らない
+  </div>
+  <button class="small-btn" id="undo">今日の最後の記録を消す</button>
+</details>
+
+<script>
+(function () {
+  "use strict";
+  // ── 保存(このスマホの中だけ。読めなくても動くように)
+  var KEY = "ashibumi_v1";
+  var data = { sessions: [], stride: 70, sens: 5 };
+  try { var s = localStorage.getItem(KEY); if (s) { var o = JSON.parse(s); if (o && o.sessions) data = Object.assign(data, o); } } catch (e) {}
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+
+  var $ = function (id) { return document.getElementById(id); };
+  var WD = ["日", "月", "火", "水", "木", "金", "土"];
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function ymd(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function hm(d) { return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+  function mmss(sec) { sec = Math.floor(sec); return Math.floor(sec / 60) + ":" + pad(sec % 60); }
+  function km(steps) { return steps * data.stride / 100000; }
+
+  // ── 歩数の数え方(重力込みの加速度の大きさから、ゆっくりした平均を引いて、山を数える)
+  //   強さ 1〜10 → しきい値 4.6〜1.0 m/s²。山と山は0.25秒以上あける(1秒に4歩まで)
+  function threshold() { return 5.0 - data.sens * 0.4; }
+  var det = { avg: 9.8, armed: true, lastStep: 0 };
+  function feed(ax, ay, az, t) {
+    var m = Math.sqrt(ax * ax + ay * ay + az * az);
+    det.avg = det.avg * 0.95 + m * 0.05;          // ゆっくり追いかける平均(=重力ぶん)
+    var d = m - det.avg;
+    var th = threshold();
+    var stepped = false;
+    if (det.armed && d > th && t - det.lastStep > 250) {
+      stepped = true; det.armed = false; det.lastStep = t;
+    } else if (!det.armed && d < th * 0.3) {
+      det.armed = true;                            // いったん下がってから、次の山を数える
+    }
+    return { d: d, stepped: stepped };
+  }
+  window.__ashibumiFeed = feed;                     // PCで確かめる用
+
+  // ── 動いている回
+  var cur = null;          // {start, steps, activeMs, lastTick, times:[]}
+  var wakeLock = null;
+  var timer = null;
+
+  function onMotion(ev) {
+    if (!cur || document.hidden) return;
+    var a = ev.accelerationIncludingGravity;
+    if (!a || a.x == null) return;
+    var r = feed(a.x, a.y, a.z, performance.now());
+    $("meter").style.width = Math.max(0, Math.min(100, r.d / (threshold() * 2) * 100)) + "%";
+    if (r.stepped) { cur.steps++; cur.times.push(Date.now()); if (cur.times.length > 40) cur.times.shift(); drawNow(); }
+  }
+
+  function tick() {
+    if (!cur) return;
+    var now = Date.now();
+    if (!document.hidden) cur.activeMs += now - cur.lastTick;
+    cur.lastTick = now;
+    drawNow();
+  }
+
+  function drawNow() {
+    if (!cur) return;
+    $("nS").textContent = cur.steps.toLocaleString();
+    $("nT").textContent = mmss(cur.activeMs / 1000);
+    $("nD").innerHTML = Math.round(km(cur.steps) * 1000) + "<small>m</small>";
+    var now = Date.now(), recent = cur.times.filter(function (t) { return now - t < 10000; });
+    var pace = 0;
+    if (recent.length >= 2) pace = Math.round((recent.length - 1) / ((recent[recent.length - 1] - recent[0]) / 60000));
+    $("nP").innerHTML = pace + "<small>歩/分</small>";
+  }
+
+  async function lockScreen() {
+    try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+  }
+
+  async function start() {
+    $("msg").textContent = "";
+    if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+      try { if (await DeviceMotionEvent.requestPermission() !== "granted") { $("msg").textContent = "動きを読む許可が出なかった"; return; } }
+      catch (e) { $("msg").textContent = "動きを読む許可を出せなかった"; return; }
+    }
+    if (!window.isSecureContext) $("msg").textContent = "★httpsのページでないと揺れを読めない";
+    det.avg = 9.8; det.armed = true; det.lastStep = 0;
+    cur = { start: Date.now(), steps: 0, activeMs: 0, lastTick: Date.now(), times: [] };
+    window.addEventListener("devicemotion", onMotion);
+    timer = setInterval(tick, 500);
+    await lockScreen();
+    $("go").textContent = "ストップ"; $("go").classList.add("on");
+    $("nowCard").hidden = false;
+    drawNow();
+    // 5秒たっても揺れの知らせが来なければ、知らせる
+    var got = false, chk = function () { got = true; window.removeEventListener("devicemotion", chk); };
+    window.addEventListener("devicemotion", chk);
+    setTimeout(function () { if (cur && !got) $("msg").textContent = "揺れが読めていない(このブラウザでは使えないかも)"; }, 5000);
+  }
+
+  function stop() {
+    if (!cur) return;
+    tick();
+    window.removeEventListener("devicemotion", onMotion);
+    clearInterval(timer); timer = null;
+    try { if (wakeLock) wakeLock.release(); } catch (e) {}
+    wakeLock = null;
+    if (cur.steps >= 10) {
+      data.sessions.push({ date: ymd(new Date(cur.start)), start: cur.start, sec: Math.round(cur.activeMs / 1000), steps: cur.steps });
+      save();
+      $("msg").textContent = "";
+    } else {
+      $("msg").textContent = "10歩未満やったので記録しなかった";
+    }
+    cur = null;
+    $("go").textContent = "スタート"; $("go").classList.remove("on");
+    $("nowCard").hidden = true;
+    drawAll();
+  }
+
+  function weekStart(d) { var x = new Date(d); x.setHours(0, 0, 0, 0); var w = (x.getDay() + 6) % 7; x.setDate(x.getDate() - w); return x; }
+
+  function drawAll() {
+    var now = new Date(), today = ymd(now);
+    $("date").textContent = today + "(" + WD[now.getDay()] + ")";
+    var ts = data.sessions.filter(function (s) { return s.date === today; });
+    var sec = 0, st = 0;
+    ts.forEach(function (s) { sec += s.sec; st += s.steps; });
+    $("tN").innerHTML = ts.length + "<small>回</small>";
+    $("tT").innerHTML = Math.round(sec / 60) + "<small>分</small>";
+    $("tS").innerHTML = st.toLocaleString() + "<small>歩</small>";
+    $("tD").innerHTML = km(st).toFixed(2) + "<small>km</small>";
+    var tb = $("list");
+    if (!ts.length) tb.innerHTML = '<tr><td colspan="4" class="note">まだ無い</td></tr>';
+    else tb.innerHTML = ts.map(function (s) {
+      return "<tr><td>" + hm(new Date(s.start)) + "</td><td>" + mmss(s.sec) + "</td><td>" + s.steps.toLocaleString() +
+             "</td><td>" + Math.round(km(s.steps) * 1000) + "m</td></tr>";
+    }).join("");
+    var ws = weekStart(now).getTime(), wsec = 0, wst = 0;
+    data.sessions.forEach(function (s) { if (s.start >= ws) { wsec += s.sec; wst += s.steps; } });
+    $("wT").innerHTML = Math.round(wsec / 60) + "<small>分</small>";
+    $("wD").innerHTML = km(wst).toFixed(2) + "<small>km</small>";
+  }
+
+  // ── 画面
+  $("go").addEventListener("click", function () { cur ? stop() : start(); });
+  $("stride").value = data.stride;
+  $("stride").addEventListener("change", function () {
+    var v = parseInt(this.value, 10); if (v >= 20 && v <= 200) { data.stride = v; save(); drawAll(); drawNow(); } else this.value = data.stride;
+  });
+  $("sens").value = data.sens; $("sensV").textContent = data.sens;
+  $("sens").addEventListener("input", function () { data.sens = parseInt(this.value, 10); $("sensV").textContent = data.sens; save(); });
+  $("undo").addEventListener("click", function () {
+    var today = ymd(new Date());
+    for (var i = data.sessions.length - 1; i >= 0; i--) {
+      if (data.sessions[i].date === today) {
+        var s = data.sessions[i];
+        if (confirm(hm(new Date(s.start)) + " の記録(" + s.steps + "歩)を消す?")) { data.sessions.splice(i, 1); save(); drawAll(); }
+        return;
+      }
+    }
+    alert("今日の記録は無い");
+  });
+  // 画面に戻ったら、消えないようにし直す(切り替えると外れるため)
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) { if (cur) { cur.lastTick = Date.now(); lockScreen(); } drawAll(); }
+  });
+  setInterval(drawAll, 60000);   // 日付が変わったときのため
+  drawAll();
+})();
+</script>
+</body>
+</html>
